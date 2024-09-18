@@ -2,6 +2,8 @@
 
 A simple and interactive Streamlit app to explore mortgage recast scenarios. Adjust your mortgage details to see how lump-sum payments and recast fees can impact your monthly payments and overall interest.
 
+https://mortgage-recast-calculator-app-eenunvt4qblpjecz8bqrt3.streamlit.app
+
 ## Features
 
 - **Input Parameters**: Original loan amount, remaining balance, interest rate, years remaining, current payment, lump-sum payment, and recast fee.
