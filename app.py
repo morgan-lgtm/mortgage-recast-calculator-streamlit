@@ -75,12 +75,16 @@ def generate_amortization_schedule(principal, annual_rate, years, monthly_paymen
     remaining_principal = principal
     monthly_rate = annual_rate / 100 / 12
     total_payments = years * 12
-    
+
     for payment_number in range(1, total_payments + 1):
         interest_payment = remaining_principal * monthly_rate
-        principal_payment = min(monthly_payment - interest_payment, remaining_principal)
-        remaining_principal = max(remaining_principal - principal_payment, 0)
-        
+        principal_payment = monthly_payment - interest_payment
+        # Prevent overpayment in the last installment
+        if principal_payment > remaining_principal:
+            principal_payment = remaining_principal
+            monthly_payment = interest_payment + principal_payment
+        remaining_principal = remaining_principal - principal_payment
+
         schedule.append({
             "Payment Number": payment_number,
             "Payment": monthly_payment,
@@ -88,10 +92,19 @@ def generate_amortization_schedule(principal, annual_rate, years, monthly_paymen
             "Interest": interest_payment,
             "Remaining Principal": remaining_principal
         })
-        
-        if remaining_principal == 0:
+
+        if remaining_principal <= 0:
+            # Fill the rest of the schedule with zeros to maintain consistent length
+            for pn in range(payment_number + 1, total_payments + 1):
+                schedule.append({
+                    "Payment Number": pn,
+                    "Payment": 0.0,
+                    "Principal": 0.0,
+                    "Interest": 0.0,
+                    "Remaining Principal": 0.0
+                })
             break
-    
+
     return pd.DataFrame(schedule)
 
 # Calculate new remaining principal after lump-sum payment
@@ -101,7 +114,7 @@ new_remaining_principal = remaining_amount - lump_sum_payment
 if new_remaining_principal < 0:
     st.error("❌ **Error:** Lump-sum payment exceeds the remaining loan amount.")
 else:
-    # Calculate new monthly payment
+    # Calculate new monthly payment based on the recast principal
     new_monthly_payment = calculate_monthly_payment(
         new_remaining_principal,
         annual_interest_rate,
@@ -113,7 +126,7 @@ else:
 
     # Calculate total payments before and after recast
     total_payment_before = current_payment * years_remaining * 12
-    total_payment_after = new_monthly_payment * years_remaining * 12 + lump_sum_payment + recast_fee
+    total_payment_after = (new_monthly_payment * years_remaining * 12) + lump_sum_payment + recast_fee
 
     # Calculate interest savings
     interest_savings = total_payment_before - total_payment_after
@@ -125,7 +138,7 @@ else:
     col1, col2, col3 = st.columns(3)
     col1.metric("New Monthly Payment", f"${new_monthly_payment:,.2f}")
     col2.metric("New Remaining Principal", f"${new_remaining_principal:,.2f}")
-    col3.metric("Monthly Payment Reduction", f"${monthly_savings:,.2f}", delta=f"-{monthly_savings:,.2f}")
+    col3.metric("Monthly Payment Reduction", f"${monthly_savings:,.2f}", delta=f"-${monthly_savings:,.2f}")
 
     st.subheader("Financial Summary")
     col4, col5 = st.columns(2)
@@ -193,7 +206,7 @@ else:
         yaxis_title="Remaining Principal ($)",
         hovermode="x unified",
         template="plotly_dark",
-        xaxis=dict(range=[0, years_remaining * 12])  # Set x-axis range to match loan term
+        xaxis=dict(range=[1, years_remaining * 12])  # Set x-axis range to match loan term
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -286,5 +299,5 @@ else:
         "- **Recast Schedule**: Shows the amortization after applying the lump-sum payment and recast fee.\n"
         "- **Interest vs. Principal**: Illustrates the distribution of each payment between interest and principal.\n"
         "- **Remaining Principal Over Time**: Compares how quickly the principal is paid down in both scenarios.\n"
-        f"- **Monthly Payment Reduction**: Your monthly payment is reduced by ${monthly_savings:,.2f} after the recast."
+        f"- **Monthly Payment Reduction**: Your monthly payment is reduced by **${monthly_savings:,.2f}** after the recast."
     )
