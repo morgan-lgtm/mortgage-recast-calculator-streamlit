@@ -69,16 +69,18 @@ def calculate_monthly_payment(principal, annual_rate, years):
     payment = (monthly_rate * principal) / (1 - math.pow(1 + monthly_rate, -number_of_payments))
     return payment
 
-# Function to generate amortization schedule
+# Updated function to generate amortization schedule
 def generate_amortization_schedule(principal, annual_rate, years, monthly_payment):
     schedule = []
     remaining_principal = principal
     monthly_rate = annual_rate / 100 / 12
-    for payment_number in range(1, years * 12 + 1):
+    total_payments = years * 12
+    
+    for payment_number in range(1, total_payments + 1):
         interest_payment = remaining_principal * monthly_rate
-        principal_payment = monthly_payment - interest_payment
+        principal_payment = min(monthly_payment - interest_payment, remaining_principal)
         remaining_principal -= principal_payment
-        remaining_principal = max(remaining_principal, 0)  # Avoid negative
+        
         schedule.append({
             "Payment Number": payment_number,
             "Payment": monthly_payment,
@@ -86,8 +88,20 @@ def generate_amortization_schedule(principal, annual_rate, years, monthly_paymen
             "Interest": interest_payment,
             "Remaining Principal": remaining_principal
         })
+        
         if remaining_principal <= 0:
             break
+    
+    # If the loan is not fully paid off, add a final row with the remaining balance
+    if remaining_principal > 0:
+        schedule.append({
+            "Payment Number": total_payments,
+            "Payment": remaining_principal + interest_payment,
+            "Principal": remaining_principal,
+            "Interest": interest_payment,
+            "Remaining Principal": 0
+        })
+    
     return pd.DataFrame(schedule)
 
 # Calculate new remaining principal after lump-sum payment and adding recast fee
@@ -188,7 +202,8 @@ else:
         xaxis_title="Payment Number",
         yaxis_title="Remaining Principal ($)",
         hovermode="x unified",
-        template="plotly_dark"
+        template="plotly_dark",
+        xaxis=dict(range=[0, years_remaining * 12])  # Set x-axis range to match loan term
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -277,9 +292,9 @@ else:
 
     st.markdown("### 📝 Summary")
     st.markdown(
-        "- **Original Schedule**: Displays how your loan would amortize without any recast."
-        "- **Recast Schedule**: Shows the amortization after applying the lump-sum payment and recast fee."
-        "- **Interest vs. Principal**: Illustrates the distribution of each payment between interest and principal."
-        "- **Remaining Principal Over Time**: Compares how quickly the principal is paid down in both scenarios."
+        "- **Original Schedule**: Displays how your loan would amortize without any recast.\n"
+        "- **Recast Schedule**: Shows the amortization after applying the lump-sum payment and recast fee.\n"
+        "- **Interest vs. Principal**: Illustrates the distribution of each payment between interest and principal.\n"
+        "- **Remaining Principal Over Time**: Compares how quickly the principal is paid down in both scenarios.\n"
         f"- **Monthly Payment Reduction**: Your monthly payment is reduced by ${monthly_savings:,.2f} after the recast."
     )
