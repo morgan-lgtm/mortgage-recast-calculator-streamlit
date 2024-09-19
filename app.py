@@ -13,14 +13,14 @@ st.sidebar.header("Input Parameters")
 original_loan_amount = st.sidebar.number_input(
     "Original Loan Amount ($)",
     min_value=0.0,
-    value=720000.0,  # Updated default value
+    value=720000.0,
     step=1000.0
 )
 
 remaining_amount = st.sidebar.number_input(
     "Remaining Loan Amount ($)",
     min_value=0.0,
-    value=529000.0,  # Updated default value
+    value=529000.0,
     step=1000.0
 )
 
@@ -28,35 +28,35 @@ annual_interest_rate = st.sidebar.number_input(
     "Annual Interest Rate (%)",
     min_value=0.0,
     max_value=100.0,
-    value=7.125,  # Updated default value
+    value=7.125,
     step=0.001
 )
 
 years_remaining = st.sidebar.number_input(
     "Years Remaining",
     min_value=0,
-    value=29,  # Updated default value
+    value=29,
     step=1
 )
 
 current_payment = st.sidebar.number_input(
     "Current Monthly Payment ($)",
     min_value=0.0,
-    value=4800.0,  # Updated default value
+    value=4800.0,
     step=50.0
 )
 
 lump_sum_payment = st.sidebar.number_input(
     "Lump-Sum Payment Towards Principal ($)",
     min_value=0.0,
-    value=1000.0,  # Updated default value
+    value=1000.0,
     step=100.0
 )
 
 recast_fee = st.sidebar.number_input(
     "Recast Fee ($)",
     min_value=0.0,
-    value=250.0,  # Updated default value
+    value=250.0,
     step=50.0
 )
 
@@ -104,6 +104,9 @@ else:
         years_remaining
     )
 
+    # Calculate monthly savings
+    monthly_savings = current_payment - new_monthly_payment
+
     # Calculate total payments before and after recast
     total_payment_before = current_payment * years_remaining * 12
     total_payment_after = new_monthly_payment * years_remaining * 12 + lump_sum_payment + recast_fee
@@ -115,19 +118,20 @@ else:
     st.header("🏦 Recast Results")
 
     st.subheader("New Loan Details")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     col1.metric("New Monthly Payment", f"${new_monthly_payment:,.2f}")
     col2.metric("New Remaining Principal", f"${new_remaining_principal:,.2f}")
+    col3.metric("Monthly Payment Reduction", f"${monthly_savings:,.2f}", delta=f"-{monthly_savings:,.2f}")
 
     st.subheader("Financial Summary")
-    col3, col4 = st.columns(2)
-    col3.metric("Total Payments Before Recast", f"${total_payment_before:,.2f}")
-    col4.metric("Total Payments After Recast", f"${total_payment_after:,.2f}")
+    col4, col5 = st.columns(2)
+    col4.metric("Total Payments Before Recast", f"${total_payment_before:,.2f}")
+    col5.metric("Total Payments After Recast", f"${total_payment_after:,.2f}")
 
     st.subheader("Savings")
-    col5, col6 = st.columns(2)
-    col5.metric("Interest Savings", f"${interest_savings:,.2f}")
-    col6.metric("Recast Fee", f"${recast_fee:,.2f}")
+    col6, col7 = st.columns(2)
+    col6.metric("Interest Savings", f"${interest_savings:,.2f}")
+    col7.metric("Recast Fee", f"${recast_fee:,.2f}")
 
     st.info(
         "🔍 **Note:** A lump-sum payment reduces your principal, potentially saving you interest over the life of the loan. "
@@ -277,4 +281,5 @@ else:
         "- **Recast Schedule**: Shows the amortization after applying the lump-sum payment and recast fee."
         "- **Interest vs. Principal**: Illustrates the distribution of each payment between interest and principal."
         "- **Remaining Principal Over Time**: Compares how quickly the principal is paid down in both scenarios."
+        f"- **Monthly Payment Reduction**: Your monthly payment is reduced by ${monthly_savings:,.2f} after the recast."
     )
