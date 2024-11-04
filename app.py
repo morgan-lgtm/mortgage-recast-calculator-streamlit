@@ -2,66 +2,52 @@ import streamlit as st
 import math
 import pandas as pd
 import plotly.graph_objects as go
+from datetime import datetime, date
+import base64
+import io
 
-# Set the title of the app
-st.title("🏡 Mortgage Recast Calculator")
+# Set page config
+st.set_page_config(page_title="Mortgage Recast Calculator", layout="wide")
 
-# Sidebar for user inputs
-st.sidebar.header("Input Parameters")
+# Custom CSS for better styling
+st.markdown("""
+    <style>
+    .stAlert {
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+    .tooltip {
+        position: relative;
+        display: inline-block;
+        border-bottom: 1px dotted black;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-# Input fields with updated default values
-original_loan_amount = st.sidebar.number_input(
-    "Original Loan Amount ($)",
-    min_value=0.0,
-    value=720000.0,
-    step=1000.0
-)
+# Initialize session state for comparison
+if 'scenarios' not in st.session_state:
+    st.session_state.scenarios = []
 
-remaining_amount = st.sidebar.number_input(
-    "Remaining Loan Amount ($)",
-    min_value=0.0,
-    value=529000.0,
-    step=1000.0
-)
+def validate_inputs(remaining_amount, current_payment, lump_sum_payment, years_remaining, annual_interest_rate):
+    """Validate user inputs and return list of warnings"""
+    warnings = []
+    
+    if lump_sum_payment >= remaining_amount:
+        warnings.append("⚠️ Lump sum payment equals or exceeds remaining loan amount!")
+        
+    min_payment = calculate_monthly_payment(remaining_amount, annual_interest_rate, years_remaining)
+    if current_payment < min_payment:
+        warnings.append(f"⚠️ Current payment ({current_payment:.2f}) is less than minimum required payment ({min_payment:.2f})!")
+        
+    if years_remaining == 0:
+        warnings.append("⚠️ Years remaining cannot be zero!")
+        
+    return warnings
 
-annual_interest_rate = st.sidebar.number_input(
-    "Annual Interest Rate (%)",
-    min_value=0.0,
-    max_value=100.0,
-    value=7.125,
-    step=0.001
-)
-
-years_remaining = st.sidebar.number_input(
-    "Years Remaining",
-    min_value=0,
-    value=29,
-    step=1
-)
-
-current_payment = st.sidebar.number_input(
-    "Current Monthly Payment ($)",
-    min_value=0.0,
-    value=4800.0,
-    step=50.0
-)
-
-lump_sum_payment = st.sidebar.number_input(
-    "Lump-Sum Payment Towards Principal ($)",
-    min_value=0.0,
-    value=1000.0,
-    step=100.0
-)
-
-recast_fee = st.sidebar.number_input(
-    "Recast Fee ($)",
-    min_value=0.0,
-    value=250.0,
-    step=50.0
-)
-
-# Function to calculate monthly payment
 def calculate_monthly_payment(principal, annual_rate, years):
+    """Calculate monthly mortgage payment"""
+    if years == 0:
+        return 0
     monthly_rate = annual_rate / 100 / 12
     number_of_payments = years * 12
     if monthly_rate == 0:
@@ -69,8 +55,12 @@ def calculate_monthly_payment(principal, annual_rate, years):
     payment = (monthly_rate * principal) / (1 - math.pow(1 + monthly_rate, -number_of_payments))
     return payment
 
-# Updated function to generate amortization schedule
+def calculate_total_interest(schedule):
+    """Calculate total interest paid over the life of the loan"""
+    return schedule["Interest"].sum()
+
 def generate_amortization_schedule(principal, annual_rate, years, monthly_payment):
+    """Generate detailed amortization schedule"""
     schedule = []
     remaining_principal = principal
     monthly_rate = annual_rate / 100 / 12
@@ -79,225 +69,304 @@ def generate_amortization_schedule(principal, annual_rate, years, monthly_paymen
     for payment_number in range(1, total_payments + 1):
         interest_payment = remaining_principal * monthly_rate
         principal_payment = monthly_payment - interest_payment
-        # Prevent overpayment in the last installment
+        
         if principal_payment > remaining_principal:
             principal_payment = remaining_principal
             monthly_payment = interest_payment + principal_payment
+            
         remaining_principal = remaining_principal - principal_payment
 
         schedule.append({
             "Payment Number": payment_number,
+            "Payment Date": (datetime.now().replace(day=1) + pd.DateOffset(months=payment_number-1)).strftime('%Y-%m-%d'),
             "Payment": monthly_payment,
             "Principal": principal_payment,
             "Interest": interest_payment,
-            "Remaining Principal": remaining_principal
+            "Remaining Principal": remaining_principal,
+            "Cumulative Interest": sum(row["Interest"] for row in schedule) + interest_payment
         })
 
         if remaining_principal <= 0:
-            # Fill the rest of the schedule with zeros to maintain consistent length
-            for pn in range(payment_number + 1, total_payments + 1):
-                schedule.append({
-                    "Payment Number": pn,
-                    "Payment": 0.0,
-                    "Principal": 0.0,
-                    "Interest": 0.0,
-                    "Remaining Principal": 0.0
-                })
             break
 
     return pd.DataFrame(schedule)
 
-# Calculate new remaining principal after lump-sum payment
+def export_to_csv(original_schedule, recast_schedule):
+    """Export schedules to CSV"""
+    buffer = io.BytesIO()
+    
+    # Create a writer to write to bytes buffer
+    writer = pd.ExcelWriter(buffer, engine='xlsxwriter')
+    
+    # Write each dataframe to a different worksheet
+    original_schedule.to_excel(writer, sheet_name='Original Schedule', index=False)
+    recast_schedule.to_excel(writer, sheet_name='Recast Schedule', index=False)
+    
+    writer.close()
+    
+    return buffer
+
+# Sidebar inputs with tooltips
+st.sidebar.header("📝 Loan Details")
+
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    original_loan_amount = st.number_input(
+        "Original Loan Amount ($)",
+        min_value=0.0,
+        value=720000.0,
+        step=1000.0,
+        help="The initial amount borrowed"
+    )
+
+with col2:
+    remaining_amount = st.number_input(
+        "Current Balance ($)",
+        min_value=0.0,
+        value=529000.0,
+        step=1000.0,
+        help="The current outstanding balance on your loan"
+    )
+
+col3, col4 = st.sidebar.columns(2)
+with col3:
+    annual_interest_rate = st.number_input(
+        "Interest Rate (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=7.125,
+        step=0.125,
+        help="Annual interest rate as a percentage"
+    )
+
+with col4:
+    years_remaining = st.number_input(
+        "Years Remaining",
+        min_value=0,
+        value=29,
+        step=1,
+        help="Number of years left on your mortgage"
+    )
+
+col5, col6 = st.sidebar.columns(2)
+with col5:
+    current_payment = st.number_input(
+        "Current Payment ($)",
+        min_value=0.0,
+        value=4800.0,
+        step=50.0,
+        help="Your current monthly payment amount"
+    )
+
+with col6:
+    lump_sum_payment = st.number_input(
+        "Lump Sum Payment ($)",
+        min_value=0.0,
+        value=100000.0,
+        step=1000.0,
+        help="Amount you plan to pay towards principal"
+    )
+
+recast_fee = st.sidebar.number_input(
+    "Recast Fee ($)",
+    min_value=0.0,
+    value=250.0,
+    step=50.0,
+    help="One-time fee charged by your lender for recasting"
+)
+
+# Main content
+st.title("🏡 Mortgage Recast Calculator")
+st.markdown("""
+This calculator helps you evaluate the impact of making a lump sum payment and recasting your mortgage. 
+A recast recalculates your monthly payments based on the new principal balance while keeping the original term and interest rate.
+""")
+
+# Validate inputs
+warnings = validate_inputs(remaining_amount, current_payment, lump_sum_payment, 
+                         years_remaining, annual_interest_rate)
+for warning in warnings:
+    st.warning(warning)
+
+# Calculate new remaining principal
 new_remaining_principal = remaining_amount - lump_sum_payment
 
-# Ensure the new principal is not negative
-if new_remaining_principal < 0:
-    st.error("❌ **Error:** Lump-sum payment exceeds the remaining loan amount.")
+if new_remaining_principal <= 0:
+    st.error("❌ Lump sum payment exceeds the remaining loan amount!")
 else:
-    # Calculate new monthly payment based on the recast principal
+    # Calculate new monthly payment
     new_monthly_payment = calculate_monthly_payment(
         new_remaining_principal,
         annual_interest_rate,
         years_remaining
     )
-
-    # Calculate monthly savings
-    monthly_savings = current_payment - new_monthly_payment
-
-    # Calculate total payments before and after recast
-    total_payment_before = current_payment * years_remaining * 12
-    total_payment_after = (new_monthly_payment * years_remaining * 12) + lump_sum_payment + recast_fee
-
-    # Calculate interest savings
-    interest_savings = total_payment_before - total_payment_after
-
-    # Display the results
-    st.header("🏦 Recast Results")
-
-    st.subheader("New Loan Details")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("New Monthly Payment", f"${new_monthly_payment:,.2f}")
-    col2.metric("New Remaining Principal", f"${new_remaining_principal:,.2f}")
-    col3.metric("Monthly Payment Reduction", f"${monthly_savings:,.2f}", delta=f"-${monthly_savings:,.2f}")
-
-    st.subheader("Financial Summary")
-    col4, col5 = st.columns(2)
-    col4.metric("Total Payments Before Recast", f"${total_payment_before:,.2f}")
-    col5.metric("Total Payments After Recast", f"${total_payment_after:,.2f}")
-
-    st.subheader("Savings")
-    col6, col7 = st.columns(2)
-    col6.metric("Interest Savings", f"${interest_savings:,.2f}")
-    col7.metric("Recast Fee", f"${recast_fee:,.2f}")
-
-    st.info(
-        "🔍 **Note:** A lump-sum payment reduces your principal, potentially saving you interest over the life of the loan. "
-        "The recast fee is a one-time cost associated with recalculating your mortgage terms."
-    )
-
-    st.markdown("---")
-
-    st.header("📊 Amortization Schedule Comparison")
-
-    # Generate amortization schedules
+    
+    # Generate schedules
     original_schedule = generate_amortization_schedule(
         remaining_amount,
         annual_interest_rate,
         years_remaining,
         current_payment
     )
-
+    
     recast_schedule = generate_amortization_schedule(
         new_remaining_principal,
         annual_interest_rate,
         years_remaining,
         new_monthly_payment
     )
+    
+    # Calculate metrics
+    monthly_savings = current_payment - new_monthly_payment
+    total_payment_before = current_payment * years_remaining * 12
+    total_payment_after = (new_monthly_payment * years_remaining * 12) + lump_sum_payment + recast_fee
+    interest_savings = total_payment_before - total_payment_after
+    original_total_interest = calculate_total_interest(original_schedule)
+    recast_total_interest = calculate_total_interest(recast_schedule)
+    interest_savings_actual = original_total_interest - recast_total_interest
+    
+    # Display results in an organized layout
+    st.header("💰 Recast Analysis")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(
+            "New Monthly Payment",
+            f"${new_monthly_payment:.2f}",
+            f"-${monthly_savings:.2f}",
+            help="Your new monthly payment after recast"
+        )
+    with col2:
+        st.metric(
+            "Total Interest Saved",
+            f"${interest_savings_actual:.2f}",
+            help="Total interest savings over the life of the loan"
+        )
+    with col3:
+        years_to_recoup = recast_fee / monthly_savings if monthly_savings > 0 else float('inf')
+        st.metric(
+            "Months to Recoup Recast Fee",
+            f"{years_to_recoup:.1f}",
+            help="Number of months it will take for monthly savings to exceed recast fee"
+        )
 
-    # Create a Plotly figure
+    # Detailed metrics in expandable section
+    with st.expander("📊 Detailed Metrics"):
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            st.metric("Original Total Interest", f"${original_total_interest:.2f}")
+            st.metric("New Total Interest", f"${recast_total_interest:.2f}")
+        with col5:
+            st.metric("Total Payments (Original)", f"${total_payment_before:.2f}")
+            st.metric("Total Payments (After Recast)", f"${total_payment_after:.2f}")
+        with col6:
+            st.metric("Break-even Point", f"{(lump_sum_payment/monthly_savings):.1f} months")
+            st.metric("Interest Rate", f"{annual_interest_rate}%")
+
+    # Visualization section
+    st.header("📈 Visual Analysis")
+    
+    # Create comparison plot
     fig = go.Figure()
-
-    # Original Remaining Principal
-    fig.add_trace(
-        go.Scatter(
-            x=original_schedule["Payment Number"],
-            y=original_schedule["Remaining Principal"],
-            mode='lines',
-            name='Original Remaining Principal',
-            line=dict(color='blue')
-        )
-    )
-
-    # Recast Remaining Principal
-    fig.add_trace(
-        go.Scatter(
-            x=recast_schedule["Payment Number"],
-            y=recast_schedule["Remaining Principal"],
-            mode='lines',
-            name='Recast Remaining Principal',
-            line=dict(color='green')
-        )
-    )
-
-    # Add titles and labels
+    
+    # Original vs Recast Principal Balance
+    fig.add_trace(go.Scatter(
+        x=original_schedule["Payment Date"],
+        y=original_schedule["Remaining Principal"],
+        name="Original Balance",
+        line=dict(color="#1f77b4", width=2)
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=recast_schedule["Payment Date"],
+        y=recast_schedule["Remaining Principal"],
+        name="Recast Balance",
+        line=dict(color="#2ca02c", width=2)
+    ))
+    
     fig.update_layout(
-        title="🔄 Remaining Principal Over Time",
-        xaxis_title="Payment Number",
-        yaxis_title="Remaining Principal ($)",
+        title="Principal Balance Comparison",
+        xaxis_title="Date",
+        yaxis_title="Principal Balance ($)",
         hovermode="x unified",
-        template="plotly_dark",
-        xaxis=dict(range=[1, years_remaining * 12])  # Set x-axis range to match loan term
+        template="plotly_white"
     )
-
+    
     st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("### 📈 Detailed Amortization Schedules")
-
-    # Expandable sections for detailed schedules
-    with st.expander("🔍 Original Amortization Schedule"):
-        st.dataframe(original_schedule.style.format({
-            "Payment": "${:,.2f}",
-            "Principal": "${:,.2f}",
-            "Interest": "${:,.2f}",
-            "Remaining Principal": "${:,.2f}"
-        }))
-
-    with st.expander("🔍 Recast Amortization Schedule"):
-        st.dataframe(recast_schedule.style.format({
-            "Payment": "${:,.2f}",
-            "Principal": "${:,.2f}",
-            "Interest": "${:,.2f}",
-            "Remaining Principal": "${:,.2f}"
-        }))
-
-    st.markdown("---")
-
-    st.header("📊 Interest vs. Principal Payments")
-
-    # Create a stacked bar chart for original schedule
+    
+    # Interest comparison plot
     fig2 = go.Figure()
-
-    fig2.add_trace(
-        go.Bar(
-            x=original_schedule["Payment Number"],
-            y=original_schedule["Interest"],
-            name='Interest (Original)',
-            marker_color='indianred'
-        )
-    )
-
-    fig2.add_trace(
-        go.Bar(
-            x=original_schedule["Payment Number"],
-            y=original_schedule["Principal"],
-            name='Principal (Original)',
-            marker_color='lightsalmon'
-        )
-    )
-
-    fig2.add_trace(
-        go.Bar(
-            x=recast_schedule["Payment Number"],
-            y=recast_schedule["Interest"],
-            name='Interest (Recast)',
-            marker_color='darkseagreen'
-        )
-    )
-
-    fig2.add_trace(
-        go.Bar(
-            x=recast_schedule["Payment Number"],
-            y=recast_schedule["Principal"],
-            name='Principal (Recast)',
-            marker_color='mediumseagreen'
-        )
-    )
-
-    # Update layout for stacked bars
+    
+    fig2.add_trace(go.Scatter(
+        x=original_schedule["Payment Date"],
+        y=original_schedule["Cumulative Interest"],
+        name="Original Cumulative Interest",
+        line=dict(color="#ff7f0e", width=2)
+    ))
+    
+    fig2.add_trace(go.Scatter(
+        x=recast_schedule["Payment Date"],
+        y=recast_schedule["Cumulative Interest"],
+        name="Recast Cumulative Interest",
+        line=dict(color="#d62728", width=2)
+    ))
+    
     fig2.update_layout(
-        barmode='stack',
-        title="💰 Interest vs. Principal Payments Over Time",
-        xaxis_title="Payment Number",
-        yaxis_title="Amount ($)",
+        title="Cumulative Interest Comparison",
+        xaxis_title="Date",
+        yaxis_title="Cumulative Interest ($)",
         hovermode="x unified",
-        template="plotly_dark",
-        legend=dict(
-            x=0.01,
-            y=0.99,
-            bgcolor='rgba(0,0,0,0)',
-            bordercolor='rgba(0,0,0,0)'
-        )
+        template="plotly_white"
     )
-
+    
     st.plotly_chart(fig2, use_container_width=True)
 
-    st.markdown("---")
-
-    st.markdown("### 📝 Summary")
-    st.markdown(
-        "- **Original Schedule**: Displays how your loan would amortize without any recast.\n"
-        "- **Recast Schedule**: Shows the amortization after applying the lump-sum payment and recast fee.\n"
-        "- **Interest vs. Principal**: Illustrates the distribution of each payment between interest and principal.\n"
-        "- **Remaining Principal Over Time**: Compares how quickly the principal is paid down in both scenarios.\n"
-        f"- **Monthly Payment Reduction**: Your monthly payment is reduced by **${monthly_savings:,.2f}** after the recast."
+    # Export functionality
+    st.header("📑 Export Data")
+    
+    excel_buffer = export_to_csv(original_schedule, recast_schedule)
+    
+    st.download_button(
+        label="Download Detailed Schedules (Excel)",
+        data=excel_buffer.getvalue(),
+        file_name=f"mortgage_recast_analysis_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.ms-excel"
     )
+
+    # Additional information
+    st.header("ℹ️ Additional Information")
+    st.markdown("""
+    ### Key Takeaways:
+    * Your monthly payment will decrease by **${:.2f}**
+    * You'll save **${:.2f}** in total interest over the life of the loan
+    * It will take **{:.1f}** months to recoup the recast fee
+    
+    ### Important Notes:
+    * This analysis assumes a fixed interest rate
+    * The recast fee is typically a one-time cost
+    * Additional principal payments can be made after recasting
+    * Contact your lender for specific recast requirements and fees
+    """.format(monthly_savings, interest_savings_actual, years_to_recoup))
+
+    # Save scenario for comparison if requested
+    if st.button("Save This Scenario for Comparison"):
+        scenario = {
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "lump_sum": lump_sum_payment,
+            "new_payment": new_monthly_payment,
+            "total_savings": interest_savings_actual,
+            "months_to_recoup": years_to_recoup
+        }
+        st.session_state.scenarios.append(scenario)
+        st.success("Scenario saved!")
+
+    # Display saved scenarios
+    if st.session_state.scenarios:
+        st.header("📊 Saved Scenarios")
+        scenarios_df = pd.DataFrame(st.session_state.scenarios)
+        st.dataframe(scenarios_df.style.format({
+            "lump_sum": "${:,.2f}",
+            "new_payment": "${:,.2f}",
+            "total_savings": "${:,.2f}",
+            "months_to_recoup": "{:,.1f}"
+        }))
